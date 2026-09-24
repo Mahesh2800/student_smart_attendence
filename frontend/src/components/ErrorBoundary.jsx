@@ -1,0 +1,2 @@
+import { Component } from 'react'
+export default class ErrorBoundary extends Component { state = { hasError: false }; static getDerivedStateFromError() { return { hasError: true } } render() { return this.state.hasError ? <div className="error-state"><h2>Something went wrong</h2><button className="button secondary" onClick={() => window.location.reload()}>Reload workspace</button></div> : this.props.children } }

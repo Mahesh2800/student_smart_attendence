@@ -1,0 +1,2 @@
+import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+export default function ReportChart({ data = [] }) { return <div className="chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={data}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#d9dedb" /><XAxis dataKey="name" tick={{ fill: '#65736c', fontSize: 12 }} /><YAxis tick={{ fill: '#65736c', fontSize: 12 }} /><Tooltip /><Bar dataKey="percentage" fill="#1c7c6b" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div> }

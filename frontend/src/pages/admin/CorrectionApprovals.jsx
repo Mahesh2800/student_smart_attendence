@@ -1,0 +1,5 @@
+import { useEffect, useState } from 'react'
+import { getCorrections, resolveCorrection } from '../../api/attendanceService'
+import CorrectionRequestCard from '../../components/CorrectionRequestCard'
+import Loader from '../../components/Loader'
+export default function CorrectionApprovals() { const [items, setItems] = useState(null); useEffect(() => { getCorrections().then(({ data }) => setItems(data.results || data)).catch(() => setItems([])) }, []); const resolve = async (id, action) => { await resolveCorrection(id, action); setItems(items.map((item) => item.id === id ? { ...item, approval_status: action === 'approve' ? 'Approved' : 'Rejected' } : item)) }; return <><div className="page-heading"><div><span className="eyebrow">REVIEW QUEUE</span><h1>Correction approvals</h1><p>Resolve attendance changes with the original reason in view.</p></div></div><div className="stack">{items === null ? <Loader /> : items.length ? items.map((item) => <CorrectionRequestCard key={item.id} item={item} onResolve={resolve} />) : <div className="empty-state">No correction requests are waiting.</div>}</div></> }

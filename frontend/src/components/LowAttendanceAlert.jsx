@@ -1,0 +1,1 @@
+export default function LowAttendanceAlert({ count = 0 }) { if (!count) return null; return <div className="alert alert-warn"><strong>Attention needed</strong><span>{count} subject{count === 1 ? '' : 's'} below the 75% attendance threshold.</span></div> }
