@@ -130,4 +130,4 @@ The current attendance suite contains ten tests covering cancelled-session prote
 
 ## AI usage report
 
-AI assistance was used to inspect the existing attendance flow, identify faculty edge cases, implement focused backend and frontend fixes, add regression tests, and update this documentation. Changes were verified with Django diagnostics, six attendance tests, and a successful Vite production build. No credentials or external private data were used.
+Claude Code was used to inspect the existing attendance flow, identify faculty edge cases, implement focused backend and frontend fixes, add regression tests, and update this documentation. Changes were verified with Django diagnostics, ten attendance tests, and a successful Vite production build. No credentials or external private data were used. The detailed submission report is maintained locally and is intentionally excluded from the GitHub repository.
