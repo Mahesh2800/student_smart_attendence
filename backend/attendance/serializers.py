@@ -1,6 +1,10 @@
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
@@ -72,8 +76,13 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         instance = self.instance or AttendanceSession()
-        if 'faculty' not in attrs and self.context.get('request') and hasattr(self.context['request'].user, 'faculty_profile'):
-            attrs['faculty'] = self.context['request'].user.faculty_profile
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'faculty_profile') and self.instance:
+            requested_faculty = attrs.get('faculty', self.instance.faculty)
+            if requested_faculty != request.user.faculty_profile:
+                raise serializers.ValidationError({'faculty': 'Faculty cannot transfer session ownership.'})
+        if 'faculty' not in attrs and request and hasattr(request.user, 'faculty_profile'):
+            attrs['faculty'] = request.user.faculty_profile
         for key, value in attrs.items():
             setattr(instance, key, value)
         try:
@@ -95,6 +104,11 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         session = attrs.get('session', self.instance.session if self.instance else None)
         student = attrs.get('student', self.instance.student if self.instance else None)
+        if self.instance:
+            if 'session' in attrs and attrs['session'] != self.instance.session:
+                raise serializers.ValidationError({'session': 'An attendance record cannot be moved to another session.'})
+            if 'student' in attrs and attrs['student'] != self.instance.student:
+                raise serializers.ValidationError({'student': 'An attendance record cannot be reassigned to another student.'})
         if session and session.status == AttendanceSession.Status.CANCELLED:
             raise serializers.ValidationError({'session': 'Attendance cannot be marked for a cancelled session.'})
         if session and student and session.section_id != student.current_section_id:
@@ -109,11 +123,18 @@ class AttendanceCorrectionRequestSerializer(serializers.ModelSerializer):
         read_only_fields = ['requested_by', 'approval_status', 'approved_by', 'requested_at', 'resolved_at', 'old_status']
 
     def validate(self, attrs):
-        record = attrs['record']
-        if not attrs.get('reason', '').strip():
+        record = attrs.get('record', self.instance.record if self.instance else None)
+        reason = attrs.get('reason', self.instance.reason if self.instance else '')
+        new_status = attrs.get('new_status', self.instance.new_status if self.instance else None)
+        if not reason.strip():
             raise serializers.ValidationError({'reason': 'A reason is required.'})
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'faculty_profile') and record.session.date < (timezone.now() - timedelta(hours=getattr(settings, 'CORRECTION_WINDOW_HOURS', 48))).date():
+            raise serializers.ValidationError({'record': 'Faculty corrections are outside the allowed time window.'})
+        if not self.instance and AttendanceCorrectionRequest.objects.filter(record=record, requested_by=request.user, approval_status=AttendanceCorrectionRequest.ApprovalStatus.PENDING).exists():
+            raise serializers.ValidationError({'record': 'A pending correction already exists for this record.'})
         attrs['old_status'] = record.status
-        if attrs['new_status'] == record.status:
+        if new_status == record.status:
             raise serializers.ValidationError({'new_status': 'Choose a different attendance status.'})
         return attrs
 

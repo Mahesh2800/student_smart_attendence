@@ -118,7 +118,7 @@ npm run build
 Pop-Location
 ```
 
-The current attendance suite contains six tests covering cancelled-session protection, report authentication and scope validation, percentage calculation, uniqueness, and student record isolation. The frontend production build completes successfully; Vite currently reports only its existing bundle-size warning.
+The current attendance suite contains ten tests covering cancelled-session protection, report authentication and scope validation, percentage calculation, uniqueness, student record isolation, department mapping validation, faculty report scoping, correction-window enforcement, and date-filter validation. The frontend production build completes successfully; Vite currently reports only its existing bundle-size warning.
 
 ## Known limitations
 

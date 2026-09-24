@@ -77,6 +77,15 @@ class SubjectFacultyMapping(models.Model):
 	class Meta:
 		constraints = [models.UniqueConstraint(fields=['subject', 'faculty', 'section'], name='unique_subject_faculty_section')]
 
+	def clean(self):
+		errors = {}
+		if self.subject_id and self.section_id and self.subject.department_id != self.section.department_id:
+			errors['section'] = 'Subject and section must belong to the same department.'
+		if self.faculty_id and self.section_id and self.faculty.department_id != self.section.department_id:
+			errors['faculty'] = 'Faculty and section must belong to the same department.'
+		if errors:
+			raise ValidationError(errors)
+
 
 class AttendanceSession(models.Model):
 	class Status(models.TextChoices):

@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import AttendanceRecord, AttendanceSession, ClassSection, Department, Faculty, Student, Subject, SubjectFacultyMapping
+from .models import AttendanceCorrectionRequest, AttendanceRecord, AttendanceSession, ClassSection, Department, Faculty, Student, Subject, SubjectFacultyMapping
 from .views import _percentage
 
 User = get_user_model()
@@ -58,3 +58,38 @@ class AttendanceBehaviorTests(TestCase):
 		client.force_authenticate(self.faculty.user)
 		self.assertEqual(client.get('/api/v1/attendance/reports/low-attendance/?threshold=101').status_code, 400)
 		self.assertEqual(client.get('/api/v1/attendance/reports/class-summary/').status_code, 400)
+
+	def test_mapping_rejects_cross_department_relationships(self):
+		other_department = Department.objects.create(name='Science', code='SCI')
+		other_section = ClassSection.objects.create(department=other_department, year=1, semester=1, section_name='A')
+		mapping = SubjectFacultyMapping(subject=self.subject, faculty=self.faculty, section=other_section)
+		with self.assertRaises(Exception):
+			mapping.full_clean()
+
+	def test_faculty_reports_use_only_their_records(self):
+		other_user = User.objects.create_user('faculty2', password='pass')
+		other_faculty = Faculty.objects.create(user=other_user, employee_id='EMP2', department=self.department)
+		SubjectFacultyMapping.objects.create(subject=self.subject, faculty=other_faculty, section=self.section)
+		other_session = AttendanceSession.objects.create(subject=self.subject, faculty=other_faculty, section=self.section, date=timezone.localdate() - timedelta(days=2), period_number=1, status=AttendanceSession.Status.COMPLETED)
+		AttendanceRecord.objects.create(session=self.session, student=self.student, status='Present', marked_by=self.faculty)
+		AttendanceRecord.objects.create(session=other_session, student=self.student, status='Absent', marked_by=other_faculty)
+		client = APIClient()
+		client.force_authenticate(self.faculty.user)
+		response = client.get(f'/api/v1/attendance/reports/student-percentage/{self.student.id}/')
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['overall'], 100)
+
+	def test_faculty_correction_window_is_enforced(self):
+		old_session = AttendanceSession.objects.create(subject=self.subject, faculty=self.faculty, section=self.section, date=timezone.localdate() - timedelta(days=10), period_number=1, status=AttendanceSession.Status.COMPLETED)
+		record = AttendanceRecord.objects.create(session=old_session, student=self.student, status='Present', marked_by=self.faculty)
+		client = APIClient()
+		client.force_authenticate(self.faculty.user)
+		response = client.post('/api/v1/attendance/corrections/', {'record': record.id, 'new_status': 'Absent', 'reason': 'Correcting an old entry'}, format='json')
+		self.assertEqual(response.status_code, 400)
+		self.assertFalse(AttendanceCorrectionRequest.objects.filter(record=record).exists())
+
+	def test_class_summary_validates_date_filters(self):
+		client = APIClient()
+		client.force_authenticate(self.faculty.user)
+		response = client.get(f'/api/v1/attendance/reports/class-summary/?section_id={self.section.id}&date_from=not-a-date')
+		self.assertEqual(response.status_code, 400)

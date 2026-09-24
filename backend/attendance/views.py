@@ -1,5 +1,7 @@
 import csv
+import math
 from datetime import date
+from io import StringIO
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -126,9 +128,7 @@ class AttendanceSessionViewSet(ScopedModelViewSet):
         students = {student.id: student for student in Student.objects.filter(id__in=student_ids, current_section=session.section)}
         if len(students) != len(student_ids):
             raise ValidationError('Every student must belong to the session section.')
-        marker = request.user.faculty_profile if is_faculty(request.user) else Faculty.objects.first()
-        if marker is None:
-            raise ValidationError('Create a faculty profile before marking attendance.')
+        marker = request.user.faculty_profile if is_faculty(request.user) else session.faculty
         with transaction.atomic():
             for row in payload.validated_data['records']:
                 record, created = AttendanceRecord.objects.get_or_create(
@@ -167,9 +167,7 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Only admins and faculty can mark attendance.')
         if not is_admin(self.request.user) and serializer.validated_data['session'].faculty_id != self.request.user.faculty_profile.id:
             raise PermissionDenied('You cannot mark this session.')
-        marker = self.request.user.faculty_profile if is_faculty(self.request.user) else Faculty.objects.first()
-        if marker is None:
-            raise ValidationError('Create a faculty profile before marking attendance.')
+        marker = self.request.user.faculty_profile if is_faculty(self.request.user) else serializer.validated_data['session'].faculty
         serializer.save(marked_by=marker)
 
 
@@ -212,6 +210,8 @@ class AttendanceCorrectionRequestViewSet(viewsets.ModelViewSet):
             correction.save(update_fields=['approval_status', 'approved_by', 'resolved_at'])
             if decision == AttendanceCorrectionRequest.ApprovalStatus.APPROVED:
                 record = correction.record
+                if record.status != correction.old_status:
+                    raise ValidationError('This correction is stale because the record has changed.')
                 old_status = record.status
                 record.status = correction.new_status
                 record.save(update_fields=['status', 'marked_at'])
@@ -234,7 +234,7 @@ def low_attendance(request):
         threshold = float(request.query_params.get('threshold', 75))
     except (TypeError, ValueError):
         raise ValidationError({'threshold': 'Threshold must be a number between 0 and 100.'})
-    if not 0 <= threshold <= 100:
+    if not math.isfinite(threshold) or not 0 <= threshold <= 100:
         raise ValidationError({'threshold': 'Threshold must be between 0 and 100.'})
     students = Student.objects.select_related('user', 'department')
     if is_faculty(request.user):
@@ -243,7 +243,10 @@ def low_attendance(request):
         students = students.filter(id=request.user.student_profile.id)
     result = []
     for student in students:
-        records = list(student.attendance_records.select_related('session__subject', 'session').filter(session__date__gte=student.enrollment_date))
+        records_query = student.attendance_records.select_related('session__subject', 'session').filter(session__date__gte=student.enrollment_date)
+        if is_faculty(request.user):
+            records_query = records_query.filter(session__faculty=request.user.faculty_profile)
+        records = list(records_query)
         percentage = _percentage(records)
         if percentage < threshold:
             by_subject = {}
@@ -263,6 +266,10 @@ def student_percentage(request, student_id):
     except Student.DoesNotExist:
         raise ValidationError({'student_id': 'Student not found.'})
     records = student.attendance_records.select_related('session__subject', 'session')
+    if is_faculty(request.user):
+        records = records.filter(session__faculty=request.user.faculty_profile)
+        if not records.exists():
+            raise PermissionDenied('You can only view students from your sessions.')
     by_subject = {}
     for record in records:
         # Enrollment dates exclude sessions before a student joined; cancelled sessions have no denominator.
@@ -282,6 +289,13 @@ def class_summary(request):
     except ValueError:
         raise ValidationError({'section_id': 'section_id must be an integer.'})
     records = AttendanceRecord.objects.select_related('session', 'student').filter(session__section_id=section_id).exclude(session__status=AttendanceSession.Status.CANCELLED)
+    for parameter, lookup in [('date_from', 'gte'), ('date_to', 'lte')]:
+        value = request.query_params.get(parameter)
+        if value:
+            try:
+                records = records.filter(**{f'session__date__{lookup}': date.fromisoformat(value)})
+            except ValueError:
+                raise ValidationError({parameter: 'Use YYYY-MM-DD.'})
     if is_faculty(request.user):
         records = records.filter(session__faculty=request.user.faculty_profile)
     return Response({'section_id': section_id, 'total_records': records.count(), 'present': records.filter(status__in=['Present', 'Late']).count(), 'absent': records.filter(status='Absent').count()})
@@ -295,6 +309,17 @@ def export_csv(request):
     records = AttendanceRecord.objects.select_related('student', 'session__subject', 'session__section')
     if is_faculty(request.user):
         records = records.filter(session__faculty=request.user.faculty_profile)
-    response = StreamingHttpResponse((('roll_no,subject,date,status\n' if index == 0 else '') + f'{record.student.roll_no},{record.session.subject.code},{record.session.date},{record.status}\n' for index, record in enumerate(records.iterator())), content_type='text/csv')
+    def rows():
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['roll_no', 'subject', 'date', 'status'])
+        yield output.getvalue()
+        for record in records.iterator():
+            output.seek(0)
+            output.truncate(0)
+            writer.writerow([record.student.roll_no, record.session.subject.code, record.session.date, record.status])
+            yield output.getvalue()
+
+    response = StreamingHttpResponse(rows(), content_type='text/csv')
     response['Content-Disposition'] = 'attachment; filename="attendance-report.csv"'
     return response
